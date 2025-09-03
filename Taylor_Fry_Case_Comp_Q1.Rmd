@@ -1,0 +1,568 @@
+---
+title: "Taylor Fry Case Competition"
+output: html_document
+date: "2025-07-08"
+---
+
+## Data Analysis
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(moments)
+library(stringr)
+library(car)
+library(leaps)
+library(caret)
+library(e1071)
+library(forcats)
+
+historical_df <- read_excel("historical_marathon_dataset.xlsx")
+```
+
+```{r}
+df_clean <- historical_df %>%
+  filter(!is.na(year), !is.na(gender), !is.na(injury_outcome))
+
+# Convert year to integer
+df_clean$year <- as.integer(df_clean$year)
+
+# Calculate injury rate per year per gender
+injury_summary <- df_clean %>%
+  group_by(year, gender) %>%
+  summarise(
+    total = n(),
+    injuries = sum(injury_outcome == 1),
+    injury_rate = injuries / total
+  ) %>%
+  ungroup()
+
+# Plot the injury rate as grouped bar chart
+ggplot(injury_summary, aes(x = factor(year), y = injury_rate, fill = gender)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +
+  labs(
+    title = "Injury Rate by Gender and Year",
+    x = "Year",
+    y = "Injury Rate",
+    fill = "Gender"
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r}
+# Convert year to integer
+df_clean$year <- as.integer(df_clean$year)
+
+# Calculate injury rate by year and shoe brand
+injury_by_shoe <- df_clean %>%
+  group_by(year, shoe_brand) %>%
+  summarise(
+    total = n(),
+    injuries = sum(injury_outcome == 1),
+    injury_rate = injuries / total
+  ) %>%
+  ungroup()
+
+# Plot the grouped bar chart: one bar per shoe brand within each year
+ggplot(injury_by_shoe, aes(x = factor(year), y = injury_rate, fill = shoe_brand)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.9)) +
+  labs(
+    title = "Injury Rate by Shoe Brand and Year",
+    x = "Year",
+    y = "Injury Rate",
+    fill = "Shoe Brand"
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r}
+# Group by exact weekly_km values
+weekly_km_summary <- df_clean %>%
+  group_by(weekly_km) %>%
+  summarise(
+    total = n(),
+    injuries = sum(injury_outcome == 1),
+    injury_rate = injuries / total
+  ) %>%
+  ungroup()
+
+# Plot
+ggplot(weekly_km_summary, aes(x = weekly_km, y = injury_rate)) +
+  geom_point(color = "black", alpha = 0.6) +
+  geom_smooth(method = "loess", se = FALSE, color = "blue", size = 1.2) +
+  labs(
+    title = "Injury Rate vs. Weekly Kilometers",
+    x = "Weekly Kilometers",
+    y = "Injury Rate"
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  theme_minimal()
+```
+
+```{r}
+# Read Excel file
+df <- read_excel("historical_marathon_dataset.xlsx")
+
+# Clean and filter
+df_clean <- df %>%
+  filter(!is.na(year), !is.na(country), !is.na(injury_outcome)) %>%
+  mutate(
+    year = as.integer(year),
+    country = tolower(trimws(country)),  # remove spaces + lowercase
+    country = case_when(
+      country %in% c("aus", "australaia", "australia") ~ "australia",
+      country %in% c("us", "usa", "united states") ~ "usa",
+      TRUE ~ country
+    ),
+    country = str_to_title(country)  # Capitalise for aesthetics
+  )
+
+# Calculate injury rate
+injury_by_country <- df_clean %>%
+  group_by(year, country) %>%
+  summarise(
+    total = n(),
+    injuries = sum(injury_outcome == 1),
+    injury_rate = injuries / total,
+    .groups = "drop"
+  )
+
+# Plot
+ggplot(injury_by_country, aes(x = factor(year), y = injury_rate, fill = country)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.9)) +
+  labs(
+    title = "Injury Rate by Country and Year (Cleaned)",
+    x = "Year",
+    y = "Injury Rate",
+    fill = "Country"
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r}
+df_clean <- df %>%
+  filter(!is.na(year), !is.na(injury_outcome), !is.na(injured_prev_qtr)) %>%
+  mutate(year = as.integer(year))
+
+# Group by year and prior quarter injury status
+injury_by_prev_qtr <- df_clean %>%
+  group_by(year, injured_prev_qtr) %>%
+  summarise(
+    total = n(),
+    injuries = sum(injury_outcome == 1),
+    injury_rate = injuries / total,
+    .groups = "drop"
+  )
+
+# Convert injured_prev_qtr to a label for plot
+injury_by_prev_qtr <- injury_by_prev_qtr %>%
+  mutate(prev_qtr_injured = ifelse(injured_prev_qtr == 1, "Injured in Prev Qtr", "Not Injured in Prev Qtr"))
+
+# Plot
+ggplot(injury_by_prev_qtr, aes(x = factor(year), y = injury_rate, fill = prev_qtr_injured)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.9)) +
+  labs(
+    title = "Injury Rate by Year and Previous Quarter Injury Status",
+    x = "Year",
+    y = "Injury Rate",
+    fill = "Previous Quarter Injury Status"
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+injury_by_prev_mth <- df %>%
+  filter(!is.na(year), !is.na(injury_outcome), !is.na(injured_prev_mth)) %>%
+  mutate(year = as.integer(year)) %>%
+  group_by(year, injured_prev_mth) %>%
+  summarise(
+    total = n(),
+    injuries = sum(injury_outcome == 1),
+    injury_rate = injuries / total,
+    .groups = "drop"
+  ) %>%
+  mutate(prev_mth_injured = ifelse(injured_prev_mth == 1, "Injured in Prev Month", "Not Injured in Prev Month"))
+
+# Plot
+ggplot(injury_by_prev_mth, aes(x = factor(year), y = injury_rate, fill = prev_mth_injured)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.9)) +
+  labs(
+    title = "Injury Rate by Year and Previous Month Injury Status",
+    x = "Year",
+    y = "Injury Rate",
+    fill = "Previous Month Injury Status"
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r}
+# Group and summarize by year and injured_prev_hy
+injury_by_prev_hy <- df %>%
+  filter(!is.na(year), !is.na(injury_outcome), !is.na(injured_prev_hy)) %>%
+  mutate(year = as.integer(year)) %>%
+  group_by(year, injured_prev_hy) %>%
+  summarise(
+    total = n(),
+    injuries = sum(injury_outcome == 1),
+    injury_rate = injuries / total,
+    .groups = "drop"
+  ) %>%
+  mutate(prev_hy_injured = ifelse(injured_prev_hy == 1, "Injured in Prev Half-Year", "Not Injured in Prev Half-Year"))
+
+# Plot
+ggplot(injury_by_prev_hy, aes(x = factor(year), y = injury_rate, fill = prev_hy_injured)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.9)) +
+  labs(
+    title = "Injury Rate by Year and Previous Half-Year Injury Status",
+    x = "Year",
+    y = "Injury Rate",
+    fill = "Previous Half-Year Injury Status"
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r}
+# Clean and prepare
+df_clean <- df %>%
+  filter(!is.na(personal_best), !is.na(injury_outcome)) %>%
+  mutate(
+    personal_best = as.numeric(personal_best),              # <- FIX: convert to numeric
+    personal_best_rounded = round(personal_best)            # round safely
+  ) %>%
+  filter(!is.na(personal_best_rounded))                     # remove any newly introduced NAs
+
+# Group by personal best
+injury_by_pb <- df_clean %>%
+  group_by(personal_best_rounded) %>%
+  summarise(
+    total = n(),
+    injuries = sum(injury_outcome == 1),
+    injury_rate = injuries / total,
+    .groups = "drop"
+  )
+
+# Plot
+ggplot(injury_by_pb, aes(x = personal_best_rounded, y = injury_rate)) +
+  geom_point(color = "black", alpha = 0.6) +
+  geom_smooth(method = "loess", se = FALSE, color = "blue", size = 1.2) +
+  labs(
+    title = "Injury Rate vs. Personal Best Time",
+    x = "Personal Best Time (minutes, rounded)",
+    y = "Injury Rate"
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  theme_minimal()
+```
+
+```{r}
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(corrplot)
+
+# STEP 1: Load both datasets
+runners <- read_excel("historical_marathon_dataset.xlsx")
+events <- read_csv("event_summary.csv")
+
+# STEP 2: Prepare event data
+events <- events %>%
+  mutate(
+    base_year = floor(year),                             # Extract year (e.g. 2004.5 → 2004)
+    marathon_number = ifelse(year %% 1 == 0, 1, 2),       # 0 decimal = 1st marathon, .5 = 2nd marathon
+    marathon_id = paste0(base_year, "_", marathon_number)
+  )
+
+# STEP 3: Assign marathon_number to runners (even split)
+runners <- runners %>%
+  filter(!is.na(year)) %>%
+  mutate(year = as.integer(year)) %>%
+  group_by(year) %>%
+  arrange(year) %>%
+  mutate(
+    row_num = row_number(),
+    total = n(),
+    marathon_number = ifelse(row_num <= total / 2, 1, 2),
+    marathon_id = paste0(year, "_", marathon_number)
+  ) %>%
+  ungroup()
+
+# STEP 4: Count injuries per marathon
+injuries_per_event <- runners %>%
+  filter(!is.na(injury_outcome)) %>%
+  group_by(marathon_id) %>%
+  summarise(total_injuries = sum(injury_outcome == 1), .groups = "drop")
+
+# STEP 5: Merge with event data
+merged <- events %>%
+  inner_join(injuries_per_event, by = "marathon_id")
+
+# STEP 6: Correlation data preparation
+cor_data <- merged %>%
+  select(total_injuries, temp_10am, humidity, rainfall,
+         elevation_gain, hydration_stations, toilet_stations, crowding_density) %>%
+  na.omit()
+
+# STEP 7: Correlation matrix + plot
+cor_matrix <- cor(cor_data)
+
+corrplot::corrplot(cor_matrix, method = "color", type = "upper",
+                   addCoef.col = "black", tl.col = "black",
+                   number.cex = 0.7, title = "Correlation with Injuries")
+
+
+```
+
+```{r}
+# STEP 1: Select variables of interest from merged data
+pair_data <- merged %>%
+  select(total_injuries, temp_10am, humidity, rainfall,
+         elevation_gain, hydration_stations, toilet_stations, crowding_density) %>%
+  na.omit()
+
+# STEP 2: Create pairwise scatterplot matrix
+pairs(pair_data,
+      main = "Pairwise Scatterplot Matrix of Injuries and Marathon Features",
+      pch = 21,
+      bg = "lightblue",
+      col = "black")
+```
+
+```{r}
+event_info <- events %>%
+  select(
+    marathon_id,
+    temp_10am,
+    hydration_stations,
+    gel_support,
+    stretching_station
+  )
+
+# STEP 3: Merge onto the runner-level dataset
+runners_augmented <- runners %>%
+  left_join(event_info, by = "marathon_id")
+
+# STEP 4: View the first few rows
+head(runners_augmented)
+```
+
+## Logistic Regression
+```{r}
+model_data <- runners_augmented %>%
+  mutate(
+    age = as.numeric(age),
+    weight = as.numeric(weight),
+    height = as.numeric(height),
+    marathons_xp = as.numeric(marathons_xp),
+    injured_prev_mth = as.numeric(injured_prev_mth),
+    injured_prev_qtr = as.numeric(injured_prev_qtr),
+    injured_prev_hy = as.numeric(injured_prev_hy),
+    temp_10am = as.numeric(temp_10am),
+    hydration_stations = as.numeric(hydration_stations),
+    gel_support = as.numeric(gel_support),
+    stretching_station = as.numeric(stretching_station),
+    injury_outcome = as.factor(injury_outcome),
+    age_after55 = ifelse(age > 55, 1, 0)
+  ) %>%
+  filter(
+    !is.na(injury_outcome),
+    !is.na(age_after55),
+    !is.na(weight),
+    !is.na(height),
+    !is.na(marathons_xp),
+    !is.na(injured_prev_mth),
+    !is.na(injured_prev_qtr),
+    !is.na(injured_prev_hy),
+    !is.na(temp_10am),
+    !is.na(hydration_stations),
+    !is.na(gel_support),
+    !is.na(stretching_station)
+  )
+
+# Step 2: Fit logistic regression model
+logit_model <- glm(
+  injury_outcome ~ age_after55 +
+    marathons_xp +
+    weight +
+    injured_prev_mth +
+    injured_prev_qtr +
+    injured_prev_hy +
+    height +
+    temp_10am +
+    hydration_stations +
+    gel_support +
+    stretching_station,
+  data = model_data,
+  family = binomial()
+)
+
+# Step 3: View model summary
+summary(logit_model)
+```
+
+## Prediction
+```{r}
+library(readr)
+library(dplyr)
+
+# 1) Load your 2025 data
+df_runners <- read_csv("2025_marathon_data.csv")
+df_events  <- read_csv("2025_event_vars.csv")
+
+# 2) Compute the event‐level means once
+event_means <- df_events %>% 
+  summarise(
+    temp_10am          = mean(temp_10am,          na.rm = TRUE),
+    hydration_stations = mean(hydration_stations, na.rm = TRUE),
+    gel_support        = mean(gel_support,        na.rm = TRUE),
+    stretching_station = mean(stretching_station, na.rm = TRUE)
+  )
+
+# 3) Clean & parse your runner‐level predictors
+df_base <- df_runners %>%
+  mutate(
+    age               = as.numeric(age),
+    marathons_xp      = as.numeric(marathons_xp),
+    weight            = as.numeric(weight),
+    height            = as.numeric(height),
+    injured_prev_mth  = as.numeric(injured_prev_mth),
+    injured_prev_qtr  = as.numeric(injured_prev_qtr),
+    injured_prev_hy   = as.numeric(injured_prev_hy),
+    age_after55       = ifelse(age > 55, age - 55, 0)
+  )
+
+# 4) Repeat that one‐row event_means to match the number of runners
+n_runners <- nrow(df_base)
+event_df  <- event_means[rep(1, n_runners), ]
+
+# 5) Bind them side by side
+df_model <- bind_cols(df_base, event_df)
+
+# 6) Drop any rows with missing data
+df_model <- df_model %>%
+  filter(across(
+    c(age_after55, marathons_xp, weight, height,
+      injured_prev_mth, injured_prev_qtr, injured_prev_hy,
+      temp_10am, hydration_stations, gel_support, stretching_station),
+    ~ !is.na(.)
+  ))
+
+# 7) Score with your pre‐trained logistic model
+df_model <- df_model %>%
+  mutate(pred_prob = predict(logit_model, newdata = ., type = "response"))
+
+# 8) Sum to get total expected injuries
+total_expected <- sum(df_model$pred_prob, na.rm = TRUE)
+cat("▶ Expected total injuries in 2025:", round(total_expected), "\n")
+
+```
+## Backtest
+```{r}
+#––– SETUP –––
+library(readxl)
+library(readr)
+library(dplyr)
+library(pROC)
+library(caret)
+
+#––– 1) LOAD HISTORICAL DATA –––
+runners_hist <- read_excel("historical_marathon_dataset.xlsx")
+events_hist  <- read_csv("event_summary.csv")
+
+#––– 2) BUILD marathon_id IN EVENTS –––
+events_hist <- events_hist %>%
+  mutate(
+    base_year       = floor(year),
+    marathon_number = ifelse(year %% 1 == 0, 1, 2),
+    marathon_id     = paste0(base_year, "_", marathon_number)
+  )
+
+#––– 3) ASSIGN marathon_id TO RUNNERS (even split per year) –––
+runners_hist <- runners_hist %>%
+  filter(!is.na(year), !is.na(injury_outcome)) %>%
+  mutate(year = as.integer(year)) %>%
+  group_by(year) %>%
+  arrange(year) %>%
+  mutate(
+    row_num         = row_number(),
+    total_runners   = n(),
+    marathon_number = ifelse(row_num <= total_runners/2, 1, 2),
+    marathon_id     = paste0(year, "_", marathon_number)
+  ) %>%
+  ungroup()
+
+#––– 4) MERGE EVENT-LEVEL PREDICTORS –––
+runners_aug <- runners_hist %>%
+  left_join(
+    events_hist %>%
+      select(marathon_id, temp_10am, hydration_stations, gel_support, stretching_station),
+    by = "marathon_id"
+  )
+
+#––– 5) CLEAN & PREPARE FEATURES –––
+df_bt <- runners_aug %>%
+  mutate(
+    age                = as.numeric(age),
+    marathons_xp       = as.numeric(marathons_xp),
+    weight             = as.numeric(weight),
+    height             = as.numeric(height),
+    injured_prev_mth   = as.numeric(injured_prev_mth),
+    injured_prev_qtr   = as.numeric(injured_prev_qtr),
+    injured_prev_hy    = as.numeric(injured_prev_hy),
+    temp_10am          = as.numeric(temp_10am),
+    hydration_stations = as.numeric(hydration_stations),
+    gel_support        = as.numeric(gel_support),
+    stretching_station = as.numeric(stretching_station),
+    age_after55        = ifelse(age > 55, age - 55, 0)
+  ) %>%
+  filter(across(
+    c(age_after55, marathons_xp, weight, height,
+      injured_prev_mth, injured_prev_qtr, injured_prev_hy,
+      temp_10am, hydration_stations, gel_support, stretching_station),
+    ~ !is.na(.)
+  ))
+
+#––– 6) PREDICT PROBABILITIES & CLASSES –––
+df_bt <- df_bt %>%
+  mutate(
+    pred_prob  = predict(logit_model, newdata = ., type = "response"),
+    pred_class = factor(ifelse(pred_prob >= 0.5, 1, 0), levels = c(0,1)),
+    actual     = factor(injury_outcome, levels = c(0,1))
+  )
+
+#––– 7) OVERALL CONFUSION MATRIX –––
+cm <- confusionMatrix(df_bt$pred_class, df_bt$actual, positive = "1")
+print(cm)
+
+#––– 8) ROC & AUC –––
+roc_obj <- roc(df_bt$actual, df_bt$pred_prob)
+cat("AUC:", round(auc(roc_obj),3), "\n")
+plot(roc_obj, main = "ROC Curve – Historical Backtest")
+
+#––– 9) TOTAL PREDICTED VS ACTUAL INJURIES –––
+total_predicted <- sum(df_bt$pred_prob)
+total_actual    <- sum(as.numeric(as.character(df_bt$actual)))
+cat("Total predicted injuries:", round(total_predicted), "\n")
+cat("Total actual   injuries:", total_actual,      "\n")
+
+#––– 10) YEAR-BY-YEAR SUMMARY –––
+yearly <- df_bt %>%
+  group_by(year) %>%
+  summarise(
+    actual_injuries    = sum(as.numeric(as.character(actual))),
+    predicted_injuries = sum(pred_prob),
+    .groups = "drop"
+  )
+print(yearly)
+```
+
+

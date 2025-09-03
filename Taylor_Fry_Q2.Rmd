@@ -1,0 +1,207 @@
+---
+title: "Taylor_Fry_Q2"
+output: html_document
+date: "2025-07-08"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(moments)
+library(stringr)
+library(car)
+library(leaps)
+library(caret)
+library(e1071)
+library(forcats)
+
+df <- read_excel("historical_marathon_dataset.xlsx")
+
+# 2) Filter to injured runners and make sure km‐bin is numeric
+df_incidents <- df %>%
+  filter(injury_outcome == 1, !is.na(medical_km_bin)) %>%
+  mutate(
+    medical_km_bin = as.numeric(as.character(medical_km_bin))
+  )
+
+# 3) Pick seven years (adjust as you like)
+years_to_plot <- sort(unique(df_incidents$year))[1:10]
+
+df7 <- df_incidents %>%
+  filter(year %in% years_to_plot)
+
+# 4) Plot faceted histograms with 2 km bins
+ggplot(df7, aes(x = medical_km_bin)) +
+  geom_histogram(
+    binwidth = 2,
+    boundary = 0,
+    closed   = "left",
+    fill     = "steelblue",
+    color    = "white"
+  ) +
+  facet_wrap(~ year, ncol = 4, scales = "free_y") +
+  labs(
+    title    = "Distribution of Medical Incidents by Km-Bin",
+    subtitle = paste("Years:", paste(years_to_plot, collapse = ", ")),
+    x        = "Kilometer Bin",
+    y        = "Number of Incidents"
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text     = element_text(face = "bold"),
+    axis.text.x    = element_text(angle = 45, hjust = 1)
+  )
+
+```
+```{r}
+# 2) Filter to injured runners with valid km-bin
+df_incidents <- df %>%
+  filter(injury_outcome == 1, !is.na(medical_km_bin)) %>%
+  mutate(
+    medical_km_bin = as.numeric(as.character(medical_km_bin))
+  )
+
+# 3) Plot single overall histogram
+ggplot(df_incidents, aes(x = medical_km_bin)) +
+  geom_histogram(
+    binwidth = 2,
+    boundary = 0,
+    closed   = "left",
+    fill     = "steelblue",
+    color    = "white"
+  ) +
+  labs(
+    title    = "Overall Distribution of Medical Incidents by Km-Bin",
+    x        = "Kilometer Bin",
+    y        = "Number of Incidents"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+
+```{r}
+# 2) Keep only injured with a valid km-bin  
+inc <- df %>% 
+  filter(injury_outcome == 1, !is.na(medical_km_bin)) %>%
+  mutate(medical_km_bin = as.numeric(medical_km_bin))
+
+# 3) Build 2 km bins & get counts/proportions
+bin_width <- 2
+breaks    <- seq(0, max(inc$medical_km_bin, na.rm=TRUE) + bin_width, by=bin_width)
+
+hist_df <- inc %>% 
+  mutate(bin = cut(medical_km_bin, breaks=breaks, include.lowest=TRUE, right=FALSE)) %>%
+  count(bin) %>%
+  mutate(proportion = n / sum(n)) %>%
+  # extract numeric lower/upper from the interval labels
+  extract(bin, into=c("lower","upper"), 
+          regex="\\[([^,]+),([^\\]]+)\\)", convert=TRUE) %>%
+  mutate(
+    mid = (lower + upper)/2
+  )
+
+# 4) Fit left-skewed Beta via method-of-moments on normalized data
+max_km  <- max(inc$medical_km_bin, na.rm=TRUE)
+x_norm  <- inc$medical_km_bin / max_km
+m       <- mean(x_norm)
+v       <- var(x_norm)
+shape1  <-  m * ((m*(1-m)/v) - 1)
+shape2  <- (1-m) * ((m*(1-m)/v) - 1)
+
+# 5) Compute Beta PDF scaled to bin proportions
+hist_df <- hist_df %>%
+  mutate(
+    mid_norm  = mid / max_km,
+    beta_pdf  = dbeta(mid_norm, shape1, shape2),
+    # area of each normalized bin = bin_width/max_km
+    beta_prop = beta_pdf * (bin_width / max_km)
+  )
+
+# 6) Plot
+ggplot(hist_df, aes(x=mid, y=proportion)) +
+  geom_col(width=bin_width, fill="steelblue", alpha=0.6) +
+  geom_line(aes(y=beta_prop), color="red", size=1.2) +
+  labs(
+    title = "Empirical vs. Fitted Left-Skewed Beta Distribution",
+    x     = "Kilometer Bin Midpoint",
+    y     = "Proportion of Incidents"
+  ) +
+  theme_minimal()
+```
+```{r}
+inc <- df %>% 
+  filter(injury_outcome == 1, !is.na(medical_km_bin)) %>%
+  mutate(medical_km_bin = as.numeric(medical_km_bin))
+
+# 2) Build 2 km bins
+bin_width <- 2
+breaks    <- seq(0, max(inc$medical_km_bin, na.rm=TRUE) + bin_width, by=bin_width)
+
+hist_df <- inc %>%
+  mutate(bin = cut(medical_km_bin, breaks=breaks, include.lowest=TRUE, right=FALSE)) %>%
+  count(bin) %>%
+  mutate(proportion = n / sum(n)) %>%
+  extract(bin, into=c("lower","upper"), 
+          regex="\\[([^,]+),([^\\]]+)\\)", convert=TRUE) %>%
+  mutate(mid = (lower + upper)/2)
+
+# 3) Fit Beta by method‐of‐moments on the normalized raw data
+max_km <- max(inc$medical_km_bin, na.rm=TRUE)
+x_norm <- inc$medical_km_bin / max_km
+m <- mean(x_norm); v <- var(x_norm)
+shape1 <-  m * ((m*(1-m)/v) - 1)
+shape2 <- (1-m) * ((m*(1-m)/v) - 1)
+
+# 4) Compute Beta‐based proportions for each bin
+hist_df <- hist_df %>%
+  mutate(
+    mid_norm  = mid / max_km,
+    beta_pdf  = dbeta(mid_norm, shape1, shape2),
+    beta_prop = beta_pdf * (bin_width / max_km)  # area under PDF per bin
+  )
+
+# 5) Multiply by total injuries = 612
+total_injuries <- 612
+bin_preds <- hist_df %>%
+  transmute(
+    bin               = paste0(lower, "-", upper, " km"),
+    prop              = round(beta_prop, 4),
+    expected_injuries = round(beta_prop * total_injuries, 1)
+  )
+
+# 6) Print table
+print(bin_preds)
+```
+
+## Question 3
+```{r}
+staff_table <- bin_preds %>%
+  mutate(
+    # 1) Divide by 5, round up
+    base_staff = ceiling(expected_injuries / 5),
+    # 2) Enforce minimum of 2
+    base_staff = if_else(base_staff < 2, 2L, base_staff)
+  ) %>%
+  # 3) Compute overall average of that base level
+  mutate(
+    avg_staff = mean(base_staff, na.rm = TRUE)
+  ) %>%
+  # 4) Add +1 “insurance” for any bin above the average
+  mutate(
+    Number_of_Medical_Staff = if_else(base_staff > avg_staff,
+                                       base_staff + 1L,
+                                       base_staff)
+  ) %>%
+  # 5) Drop helper columns
+  select(bin, prop, expected_injuries, Number_of_Medical_Staff)
+
+# View the result
+print(staff_table)
+```
+
